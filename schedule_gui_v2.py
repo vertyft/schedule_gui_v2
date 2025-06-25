@@ -1,183 +1,141 @@
-{
- "cells": [
-  {
-   "cell_type": "code",
-   "execution_count": 1,
-   "id": "e0c20701-3c53-4c3e-a604-4ac95ecd5734",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "import pandas as pd\n",
-    "from datetime import datetime, timedelta\n",
-    "import re, os\n",
-    "import tkinter as tk\n",
-    "from tkinter import messagebox, filedialog, scrolledtext\n",
-    "\n",
-    "DAYS = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота']\n",
-    "WEEK_RE = re.compile(r'(\\d{2}\\.\\d{2}\\.\\d{2})\\s*-\\s*(\\d{2}\\.\\d{2}\\.\\d{2})')\n",
-    "\n",
-    "def base_subject(name: str) -> str:\n",
-    "    return re.split(r'[,(]', name, 1)[0].strip().lower()\n",
-    "\n",
-    "def parse_schedule(file_path):\n",
-    "    df = pd.read_excel(file_path, header=None)\n",
-    "    schedule = []\n",
-    "    current_week = None\n",
-    "    current_day = None\n",
-    "\n",
-    "    for _, row in df.iterrows():\n",
-    "        cell_6 = str(row[6])\n",
-    "        m = WEEK_RE.search(cell_6)\n",
-    "        if m:\n",
-    "            current_week = {\n",
-    "                'range': f\"{m.group(1)}-{m.group(2)}\",\n",
-    "                'start': datetime.strptime(m.group(1), '%d.%m.%y').date(),\n",
-    "                'end'  : datetime.strptime(m.group(2), '%d.%m.%y').date()\n",
-    "            }\n",
-    "            continue\n",
-    "\n",
-    "        day_candidate = str(row[0]).strip()\n",
-    "        if day_candidate in DAYS:\n",
-    "            current_day = day_candidate\n",
-    "\n",
-    "        if not (current_week and current_day):\n",
-    "            continue\n",
-    "\n",
-    "        subject_full = str(row[5]).strip()\n",
-    "        if not subject_full or subject_full.lower() == 'название дисциплины':\n",
-    "            continue\n",
-    "\n",
-    "        schedule.append({\n",
-    "            'date': current_week['start'] + timedelta(days=DAYS.index(current_day)),\n",
-    "            'time': str(row[2]).strip(),\n",
-    "            'room': str(row[4]).strip(),\n",
-    "            'subject': subject_full,\n",
-    "            'subject_id': base_subject(subject_full),\n",
-    "            'teacher': cell_6.strip(),\n",
-    "            'week': current_week['range']\n",
-    "        })\n",
-    "\n",
-    "    return pd.DataFrame(schedule).drop_duplicates(\n",
-    "        subset=['date', 'time', 'room', 'subject', 'teacher']\n",
-    "    )\n",
-    "\n",
-    "def search():\n",
-    "    file_path = file_path_var.get()\n",
-    "    mode = search_mode.get()\n",
-    "    keyword = keyword_entry.get().strip().lower()\n",
-    "    result_box.delete('1.0', tk.END)\n",
-    "\n",
-    "    if not file_path or not keyword:\n",
-    "        messagebox.showerror(\"Ошибка\", \"Выберите файл и введите предмет или преподавателя.\")\n",
-    "        return\n",
-    "\n",
-    "    if not os.path.exists(file_path):\n",
-    "        messagebox.showerror(\"Ошибка\", f\"Файл {file_path} не найден.\")\n",
-    "        return\n",
-    "\n",
-    "    try:\n",
-    "        df_sched = parse_schedule(file_path)\n",
-    "    except Exception as e:\n",
-    "        messagebox.showerror(\"Ошибка\", f\"Не удалось загрузить файл:\\n{e}\")\n",
-    "        return\n",
-    "\n",
-    "    if mode == 'subject':\n",
-    "        out = df_sched[df_sched['subject_id'] == keyword]\n",
-    "    else:\n",
-    "        mask = df_sched['teacher'].str.lower().str.contains(rf'\\b{keyword}\\b')\n",
-    "        out = df_sched[mask]\n",
-    "\n",
-    "    if out.empty:\n",
-    "        result_box.insert(tk.END, \"Ничего не найдено.\")\n",
-    "        return\n",
-    "\n",
-    "    output_lines = []\n",
-    "    group_name = os.path.splitext(os.path.basename(file_path))[0]\n",
-    "\n",
-    "    output_lines.append(f\"👥 Группа: {group_name}\")\n",
-    "    if mode == 'subject':\n",
-    "        output_lines.append(f\"📚 Предмет: {out.iloc[0]['subject']}\")\n",
-    "    else:\n",
-    "        output_lines.append(f\"👨‍🏫 Преподаватель: {out.iloc[0]['teacher']}\")\n",
-    "    output_lines.append(\"📅 Даты занятий:\")\n",
-    "\n",
-    "    for i, row in enumerate(out.sort_values(['date', 'time']).itertuples(), 1):\n",
-    "        output_lines.append(f\"{i:2}. {row.date:%d.%m.%Y} ({row.time}, {row.room}, {row.teacher})\")\n",
-    "\n",
-    "    output_lines.append(f\"\\n🔢 Всего занятий     : {len(out)}\")\n",
-    "    output_lines.append(f\"🗓️  Задействовано недель: {out['week'].nunique()}\")\n",
-    "\n",
-    "    result_text = \"\\n\".join(output_lines)\n",
-    "    result_box.insert(tk.END, result_text)\n",
-    "\n",
-    "    txt_name = os.path.splitext(file_path)[0] + '_результат.txt'\n",
-    "    with open(txt_name, 'w', encoding='utf-8') as f:\n",
-    "        f.write(result_text)\n",
-    "    messagebox.showinfo(\"Готово\", f\"Результат сохранен в:\\n{txt_name}\")\n",
-    "\n",
-    "def choose_file():\n",
-    "    path = filedialog.askopenfilename(\n",
-    "        title=\"Выберите Excel-файл\",\n",
-    "        filetypes=[(\"Excel files\", \"*.xlsx\")]\n",
-    "    )\n",
-    "    if path:\n",
-    "        file_path_var.set(path)\n",
-    "\n",
-    "# ---------------- GUI ----------------\n",
-    "root = tk.Tk()\n",
-    "root.title(\"Расписание занятий\")\n",
-    "root.geometry(\"700x600\")\n",
-    "\n",
-    "messagebox.showinfo(\"Расписание занятий\", \"Автор программы за результат ответственности не несет,\\nперепроверяйте даты самостоятельно.\")\n",
-    "\n",
-    "tk.Button(root, text=\"Выбрать файл\", command=choose_file).pack(pady=5)\n",
-    "file_path_var = tk.StringVar()\n",
-    "tk.Entry(root, textvariable=file_path_var, width=70).pack(pady=5)\n",
-    "\n",
-    "search_mode = tk.StringVar(value='subject')\n",
-    "tk.Radiobutton(root, text=\"По предмету\", variable=search_mode, value='subject').pack(anchor='w')\n",
-    "tk.Radiobutton(root, text=\"По преподавателю\", variable=search_mode, value='teacher').pack(anchor='w')\n",
-    "\n",
-    "tk.Label(root, text=\"Введите название предмета или фамилию преподавателя:\").pack()\n",
-    "keyword_entry = tk.Entry(root, width=50)\n",
-    "keyword_entry.pack(pady=5)\n",
-    "\n",
-    "tk.Button(root, text=\"Найти\", command=search).pack(pady=10)\n",
-    "\n",
-    "result_box = scrolledtext.ScrolledText(root, width=80, height=25)\n",
-    "result_box.pack()\n",
-    "\n",
-    "root.mainloop()\n"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": None,
-   "id": "86ae05bc-9c25-4c0b-8eef-2731345e9b70",
-   "metadata": {},
-   "outputs": [],
-   "source": []
-  }
- ],
- "metadata": {
-  "kernelspec": {
-   "display_name": "Python [conda env:base] *",
-   "language": "python",
-   "name": "conda-base-py"
-  },
-  "language_info": {
-   "codemirror_mode": {
-    "name": "ipython",
-    "version": 3
-   },
-   "file_extension": ".py",
-   "mimetype": "text/x-python",
-   "name": "python",
-   "nbconvert_exporter": "python",
-   "pygments_lexer": "ipython3",
-   "version": "3.12.7"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 5
-}
+import pandas as pd
+from datetime import datetime, timedelta
+import re, os
+import tkinter as tk
+from tkinter import messagebox, filedialog, scrolledtext
+
+DAYS = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота']
+WEEK_RE = re.compile(r'(\d{2}\.\d{2}\.\d{2})\s*-\s*(\d{2}\.\d{2}\.\d{2})')
+
+def base_subject(name: str) -> str:
+    return re.split(r'[,(]', name, 1)[0].strip().lower()
+
+def parse_schedule(file_path):
+    df = pd.read_excel(file_path, header=None)
+    schedule = []
+    current_week = None
+    current_day = None
+
+    for _, row in df.iterrows():
+        cell_6 = str(row[6])
+        m = WEEK_RE.search(cell_6)
+        if m:
+            current_week = {
+                'range': f"{m.group(1)}-{m.group(2)}",
+                'start': datetime.strptime(m.group(1), '%d.%m.%y').date(),
+                'end'  : datetime.strptime(m.group(2), '%d.%m.%y').date()
+            }
+            continue
+
+        day_candidate = str(row[0]).strip()
+        if day_candidate in DAYS:
+            current_day = day_candidate
+
+        if not (current_week and current_day):
+            continue
+
+        subject_full = str(row[5]).strip()
+        if not subject_full or subject_full.lower() == 'название дисциплины':
+            continue
+
+        schedule.append({
+            'date': current_week['start'] + timedelta(days=DAYS.index(current_day)),
+            'time': str(row[2]).strip(),
+            'room': str(row[4]).strip(),
+            'subject': subject_full,
+            'subject_id': base_subject(subject_full),
+            'teacher': cell_6.strip(),
+            'week': current_week['range']
+        })
+
+    return pd.DataFrame(schedule).drop_duplicates(
+        subset=['date', 'time', 'room', 'subject', 'teacher']
+    )
+
+def search():
+    file_path = file_path_var.get()
+    mode = search_mode.get()
+    keyword = keyword_entry.get().strip().lower()
+    result_box.delete('1.0', tk.END)
+
+    if not file_path or not keyword:
+        messagebox.showerror("Ошибка", "Выберите файл и введите предмет или преподавателя.")
+        return
+
+    if not os.path.exists(file_path):
+        messagebox.showerror("Ошибка", f"Файл {file_path} не найден.")
+        return
+
+    try:
+        df_sched = parse_schedule(file_path)
+    except Exception as e:
+        messagebox.showerror("Ошибка", f"Не удалось загрузить файл:\n{e}")
+        return
+
+    if mode == 'subject':
+        out = df_sched[df_sched['subject_id'] == keyword]
+    else:
+        mask = df_sched['teacher'].str.lower().str.contains(rf'\b{keyword}\b')
+        out = df_sched[mask]
+
+    if out.empty:
+        result_box.insert(tk.END, "Ничего не найдено.")
+        return
+
+    output_lines = []
+    group_name = os.path.splitext(os.path.basename(file_path))[0]
+
+    output_lines.append(f"👥 Группа: {group_name}")
+    if mode == 'subject':
+        output_lines.append(f"📚 Предмет: {out.iloc[0]['subject']}")
+    else:
+        output_lines.append(f"👨‍🏫 Преподаватель: {out.iloc[0]['teacher']}")
+    output_lines.append("📅 Даты занятий:")
+
+    for i, row in enumerate(out.sort_values(['date', 'time']).itertuples(), 1):
+        output_lines.append(f"{i:2}. {row.date:%d.%m.%Y} ({row.time}, {row.room}, {row.teacher})")
+
+    output_lines.append(f"\n🔢 Всего занятий     : {len(out)}")
+    output_lines.append(f"🗓️  Задействовано недель: {out['week'].nunique()}")
+
+    result_text = "\n".join(output_lines)
+    result_box.insert(tk.END, result_text)
+
+    txt_name = os.path.splitext(file_path)[0] + '_результат.txt'
+    with open(txt_name, 'w', encoding='utf-8') as f:
+        f.write(result_text)
+    messagebox.showinfo("Готово", f"Результат сохранен в:\n{txt_name}")
+
+def choose_file():
+    path = filedialog.askopenfilename(
+        title="Выберите Excel-файл",
+        filetypes=[("Excel files", "*.xlsx")]
+    )
+    if path:
+        file_path_var.set(path)
+
+# ---------------- GUI ----------------
+root = tk.Tk()
+root.title("Расписание занятий")
+root.geometry("700x600")
+
+messagebox.showinfo("Расписание занятий", "Автор программы за результат ответственности не несет,\nперепроверяйте даты самостоятельно.")
+
+tk.Button(root, text="Выбрать файл", command=choose_file).pack(pady=5)
+file_path_var = tk.StringVar()
+tk.Entry(root, textvariable=file_path_var, width=70).pack(pady=5)
+
+search_mode = tk.StringVar(value='subject')
+tk.Radiobutton(root, text="По предмету", variable=search_mode, value='subject').pack(anchor='w')
+tk.Radiobutton(root, text="По преподавателю", variable=search_mode, value='teacher').pack(anchor='w')
+
+tk.Label(root, text="Введите название предмета или фамилию преподавателя:").pack()
+keyword_entry = tk.Entry(root, width=50)
+keyword_entry.pack(pady=5)
+
+tk.Button(root, text="Найти", command=search).pack(pady=10)
+
+result_box = scrolledtext.ScrolledText(root, width=80, height=25)
+result_box.pack()
+
+root.mainloop()
